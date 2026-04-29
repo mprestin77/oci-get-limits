@@ -19,7 +19,7 @@ Main script:
 
 - Python 3
 - OCI Python SDK
-- OCI config file, usually `~/.oci/config`
+- OCI config file, by default `~/.oci/config`
 - OCI permissions to read limits and relevant service resources
 
 ## IAM policy
