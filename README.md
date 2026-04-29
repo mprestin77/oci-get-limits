@@ -151,7 +151,7 @@ The script adds a synthetic Identity row:
 
 - `policy-statements-per-compartment-hierarchy`
 
-This is calculated as the maximum cumulative number of policy statements along any existing compartment path, using a limit value of `500`.
+This is calculated as the maximum cumulative number of policy statements along any existing compartment path, using a limit value of `1000`.
 
 ## Limitations
 

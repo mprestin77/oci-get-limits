@@ -968,7 +968,7 @@ def synthetic_limit_values(service_name):
                 name="policy-statements-per-compartment-hierarchy",
                 scope_type="GLOBAL",
                 availability_domain=None,
-                value=500,
+                value=1000,
             )
         ]
     return []
