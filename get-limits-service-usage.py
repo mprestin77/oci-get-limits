@@ -16,6 +16,10 @@ from types import SimpleNamespace
 
 import oci
 
+DEFAULT_SCRIPT_SETTINGS = {
+    "IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT": 500,
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -30,6 +34,7 @@ def parse_args():
             "  python3 get-limits-service-usage.py --list-services\n"
             "  python3 get-limits-service-usage.py --service certificates\n"
             "  python3 get-limits-service-usage.py --services-file services.conf\n"
+            "  python3 get-limits-service-usage.py --settings-file limits-settings.conf\n"
             "  python3 get-limits-service-usage.py --service batch-computing --region us-ashburn-1\n"
             "  python3 get-limits-service-usage.py --only-with-usage\n"
             "  python3 get-limits-service-usage.py --profile PROD --config-file ~/.oci/config"
@@ -67,6 +72,11 @@ def parse_args():
         "--config-file",
         default=oci.config.DEFAULT_LOCATION,
         help=f"OCI config path. Default: {oci.config.DEFAULT_LOCATION}",
+    )
+    parser.add_argument(
+        "--settings-file",
+        default="limits-settings.conf",
+        help="Path to a simple KEY = VALUE settings file. Default: limits-settings.conf",
     )
     parser.add_argument(
         "--only-with-usage",
@@ -119,6 +129,37 @@ def paged_response_items(callable_obj, *args, **kwargs):
         page = response.headers.get("opc-next-page")
         if not page:
             return items
+
+
+def load_script_settings(path_text):
+    settings = dict(DEFAULT_SCRIPT_SETTINGS)
+    path = Path(path_text).expanduser()
+    if not path.exists():
+        return settings
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception as exc:
+        raise RuntimeError(f"Failed to read settings file {path}: {exc}") from exc
+
+    for line_number, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise RuntimeError(
+                f"Invalid settings line {line_number} in {path}: expected KEY = VALUE"
+            )
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key not in settings:
+            raise RuntimeError(f"Unknown setting {key} in {path}")
+        try:
+            settings[key] = int(value)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid integer value for {key} in {path}: {value}"
+            ) from exc
+    return settings
 
 
 def active_compartment_ids(identity_client, tenancy_id):
@@ -961,14 +1002,14 @@ def display_scope(service_name, limit_value):
     )
 
 
-def synthetic_limit_values(service_name):
+def synthetic_limit_values(service_name, settings):
     if service_name.lower() == "identity":
         return [
             SimpleNamespace(
                 name="policy-statements-per-compartment-hierarchy",
                 scope_type="GLOBAL",
                 availability_domain=None,
-                value=1000,
+                value=settings["IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT"],
             )
         ]
     return []
@@ -992,6 +1033,12 @@ def print_row(service_name, limit_value, usage):
 
 def main():
     args = parse_args()
+
+    try:
+        settings = load_script_settings(args.settings_file)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     try:
         config = oci.config.from_file(args.config_file, args.profile)
@@ -1044,7 +1091,7 @@ def main():
                 tenancy_id,
                 service_name=service_name,
             )
-            limit_values.extend(synthetic_limit_values(service_name))
+            limit_values.extend(synthetic_limit_values(service_name, settings))
         except Exception as exc:
             failed_services.append((service_name, str(exc)))
             continue

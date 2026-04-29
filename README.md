@@ -26,6 +26,7 @@ Main script:
 
 - `get-limits-service-usage.py` - main script
 - `services.conf` - sample services file
+- `limits-settings.conf` - script settings file
 
 ## Usage
 
@@ -71,6 +72,12 @@ Use a specific OCI profile:
 python3 get-limits-service-usage.py --profile PROD
 ```
 
+Use a custom settings file:
+
+```bash
+python3 get-limits-service-usage.py --settings-file limits-settings.conf
+```
+
 ## Services file format
 
 `--services-file` expects a plain-text file with one OCI service name per line.
@@ -87,6 +94,16 @@ compute
 vcn
 load-balancer
 faas
+```
+
+## Settings file format
+
+`--settings-file` expects a simple `KEY = VALUE` file.
+
+Example:
+
+```text
+IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT = 500
 ```
 
 ## Flags
@@ -151,7 +168,7 @@ The script adds a synthetic Identity row:
 
 - `policy-statements-per-compartment-hierarchy`
 
-This is calculated as the maximum cumulative number of policy statements along any existing compartment path, using a limit value of `1000`.
+This is calculated as the maximum cumulative number of policy statements along any existing compartment path, using the configured value of `IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT`, which defaults to `500`.
 
 ## Limitations
 
