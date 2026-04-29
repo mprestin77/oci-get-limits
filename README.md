@@ -1,4 +1,4 @@
-# OCI Limits Usage
+# OCI Limits and Usage
 
 List OCI service limits and show current usage where OCI exposes it or where usage can be calculated from service APIs.
 
