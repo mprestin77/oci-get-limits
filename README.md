@@ -100,6 +100,8 @@ faas
 
 `--settings-file` expects a simple `KEY = VALUE` file.
 
+Settings from this file are used only for limits whose values are not exposed directly through the OCI Limits API.
+
 Example:
 
 ```text
