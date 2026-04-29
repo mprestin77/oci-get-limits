@@ -129,6 +129,12 @@ IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT = 500
 
 ## Flags
 
+Show all available flags and their descriptions:
+
+```bash
+python3 get-limits-service-usage.py --help
+```
+
 These options are mutually exclusive:
 
 - `--service`
