@@ -22,6 +22,25 @@ Main script:
 - OCI config file, usually `~/.oci/config`
 - OCI permissions to read limits and relevant service resources
 
+## IAM policy
+
+The exact least-privilege policy depends on which services you query.
+
+This script:
+
+- reads OCI Limits data at the tenancy level
+- lists compartments
+- lists and reads resources for selected services when manual usage calculation is needed
+
+A practical read-only policy for running the script across many services is:
+
+```text
+Allow group <group-name> to inspect compartments in tenancy
+Allow group <group-name> to read all-resources in tenancy
+```
+
+If you want stricter least privilege, grant `read` access only to the specific service families used by your `services.conf` file, plus the permissions needed to view limits and compartments.
+
 ## Files
 
 - `get-limits-service-usage.py` - main script
