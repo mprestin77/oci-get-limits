@@ -149,6 +149,7 @@ Settings from this file are used only for limits whose values are not exposed di
 Example:
 
 ```text
+IDENTITY_DYNAMIC_GROUPS_LIMIT = 300
 IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT = 500
 ```
 
@@ -228,11 +229,14 @@ The script adds manual usage collection for selected services, including:
 
 ## Identity note
 
-The script adds a synthetic Identity row:
+The script adds synthetic Identity rows:
 
+- `dynamic-groups-count`
 - `policy-statements-per-compartment-hierarchy`
 
-This is calculated as the maximum cumulative number of policy statements along any existing compartment path, using the configured value of `IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT`, which defaults to `500`.
+`dynamic-groups-count` is calculated by listing dynamic groups in the tenancy and comparing the result to the configured value of `IDENTITY_DYNAMIC_GROUPS_LIMIT`, which defaults to `300`.
+
+`policy-statements-per-compartment-hierarchy` is calculated as the maximum cumulative number of policy statements along any existing compartment path, using the configured value of `IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT`, which defaults to `500`.
 
 ## Limitations
 

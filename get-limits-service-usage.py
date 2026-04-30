@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import oci
 
 DEFAULT_SCRIPT_SETTINGS = {
+    "IDENTITY_DYNAMIC_GROUPS_LIMIT": 300,
     "IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT": 500,
 }
 
@@ -1046,17 +1047,33 @@ def display_scope(service_name, limit_value):
     )
 
 
-def synthetic_limit_values(service_name, settings):
-    if service_name.lower() == "identity":
-        return [
+def synthetic_limit_values(service_name, settings, existing_limit_names=None):
+    if service_name.lower() != "identity":
+        return []
+
+    existing_limit_names = existing_limit_names or set()
+    synthetic_rows = []
+
+    if "dynamic-groups-count" not in existing_limit_names:
+        synthetic_rows.append(
+            SimpleNamespace(
+                name="dynamic-groups-count",
+                scope_type="GLOBAL",
+                availability_domain=None,
+                value=settings["IDENTITY_DYNAMIC_GROUPS_LIMIT"],
+            )
+        )
+    if "policy-statements-per-compartment-hierarchy" not in existing_limit_names:
+        synthetic_rows.append(
             SimpleNamespace(
                 name="policy-statements-per-compartment-hierarchy",
                 scope_type="GLOBAL",
                 availability_domain=None,
                 value=settings["IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT"],
             )
-        ]
-    return []
+        )
+
+    return synthetic_rows
 
 
 def output_row(region_name, service_name, limit_value, usage):
@@ -1222,7 +1239,13 @@ def main():
                     tenancy_id,
                     service_name=service_name,
                 )
-                limit_values.extend(synthetic_limit_values(service_name, settings))
+                limit_values.extend(
+                    synthetic_limit_values(
+                        service_name,
+                        settings,
+                        existing_limit_names={item.name for item in limit_values},
+                    )
+                )
             except Exception as exc:
                 failed_services.append((region_name, service_name, str(exc)))
                 continue
