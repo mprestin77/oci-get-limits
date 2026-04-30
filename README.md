@@ -12,6 +12,7 @@ Main script:
 - Shows current `USED` values when available
 - Adds manual usage collection for selected services where the Limits API is incomplete
 - Supports service filtering through a plain-text config file
+- Can export results to CSV or XLSX
 - Supports semantic scope labels such as `PER_VCN`, `PER_LB`, and `PER_POLICY`
 - Can show only limits with non-zero usage
 
@@ -79,10 +80,28 @@ Run only for limits with non-zero usage:
 python3 get-limits-service-usage.py --only-with-usage
 ```
 
+Write output to a file:
+
+```bash
+python3 get-limits-service-usage.py --csv limits.csv
+```
+
 Run in a specific region:
 
 ```bash
 python3 get-limits-service-usage.py --region us-ashburn-1
+```
+
+Run in multiple regions:
+
+```bash
+python3 get-limits-service-usage.py --region us-ashburn-1,us-phoenix-1
+```
+
+Write multi-region output to a workbook:
+
+```bash
+python3 get-limits-service-usage.py --csv limits.xlsx --region us-ashburn-1,us-phoenix-1
 ```
 
 Use a specific OCI profile:
@@ -144,6 +163,12 @@ These options are mutually exclusive:
 `--only-with-usage` means:
 
 - show only rows where `USED > 0`
+
+`--csv` means:
+
+- single region + `.csv` filename: write a real CSV file
+- multiple regions: write an XLSX workbook with one worksheet per region
+- if multiple regions are requested and the filename does not end with `.xlsx`, the script writes an `.xlsx` file instead
 
 ## Output
 

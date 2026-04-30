@@ -9,6 +9,7 @@ It currently adds manual usage for selected `identity`, `certificates`, and
 """
 
 import argparse
+import csv
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -35,6 +36,7 @@ def parse_args():
             "  python3 get-limits-service-usage.py --service certificates\n"
             "  python3 get-limits-service-usage.py --services-file services.conf\n"
             "  python3 get-limits-service-usage.py --settings-file limits-settings.conf\n"
+            "  python3 get-limits-service-usage.py --csv limits.csv\n"
             "  python3 get-limits-service-usage.py --service batch-computing --region us-ashburn-1\n"
             "  python3 get-limits-service-usage.py --only-with-usage\n"
             "  python3 get-limits-service-usage.py --profile PROD --config-file ~/.oci/config"
@@ -59,7 +61,7 @@ def parse_args():
     parser.add_argument(
         "-r",
         "--region",
-        help="Override the region from your OCI config.",
+        help="Override the region from your OCI config. Use a comma-separated list for multiple regions.",
     )
     parser.add_argument(
         "-p",
@@ -77,6 +79,12 @@ def parse_args():
         "--settings-file",
         default="limits-settings.conf",
         help="Path to a simple KEY = VALUE settings file. Default: limits-settings.conf",
+    )
+    parser.add_argument(
+        "--csv",
+        "--CSV",
+        dest="csv_output",
+        help="Write output to a file. Single region writes CSV. Multiple regions write an XLSX workbook with one worksheet per region.",
     )
     parser.add_argument(
         "--only-with-usage",
@@ -160,6 +168,24 @@ def load_script_settings(path_text):
                 f"Invalid integer value for {key} in {path}: {value}"
             ) from exc
     return settings
+
+
+def parse_regions(region_text, default_region):
+    if not region_text:
+        return [default_region]
+
+    regions = []
+    seen = set()
+    for raw_region in region_text.split(","):
+        region = raw_region.strip()
+        if not region or region in seen:
+            continue
+        seen.add(region)
+        regions.append(region)
+
+    if not regions:
+        raise RuntimeError("No valid regions were provided.")
+    return regions
 
 
 def active_compartment_ids(identity_client, tenancy_id):
@@ -1015,20 +1041,114 @@ def synthetic_limit_values(service_name, settings):
     return []
 
 
-def print_row(service_name, limit_value, usage):
+def output_row(region_name, service_name, limit_value, usage):
     scope = display_scope(service_name, limit_value)
     quota = usage["quota"]
     effective_max = quota if quota is not None else limit_value.value
     limit_name = limit_value.name
 
-    print(
-        f"{ellipsize(service_name, 18):<18} "
-        f"{ellipsize(limit_name, 48):<48} "
-        f"{ellipsize(scope, 28):<28} "
-        f"{format_number(limit_value.value, limit_name):>12} "
-        f"{format_number(usage['used']):>12} "
-        f"{percent_used(usage['used'], effective_max, limit_name):>8}"
+    return {
+        "region": region_name,
+        "service": service_name,
+        "limit": limit_name,
+        "scope": scope,
+        "max": format_number(limit_value.value, limit_name),
+        "used": format_number(usage["used"]),
+        "used_pct": percent_used(usage["used"], effective_max, limit_name),
+    }
+
+
+def print_row(row, show_region=False):
+    line = ""
+    if show_region:
+        line += f"{ellipsize(row['region'], 15):<15} "
+    line += (
+        f"{ellipsize(row['service'], 18):<18} "
+        f"{ellipsize(row['limit'], 48):<48} "
+        f"{ellipsize(row['scope'], 28):<28} "
+        f"{row['max']:>12} "
+        f"{row['used']:>12} "
+        f"{row['used_pct']:>8}"
     )
+    print(line)
+
+
+def safe_sheet_name(region_name, existing_names):
+    invalid = set("[]:*?/\\")
+    cleaned = "".join("_" if character in invalid else character for character in region_name)
+    cleaned = cleaned[:31] or "region"
+    candidate = cleaned
+    counter = 2
+    while candidate in existing_names:
+        suffix = f"_{counter}"
+        candidate = f"{cleaned[:31-len(suffix)]}{suffix}"
+        counter += 1
+    return candidate
+
+
+def write_csv_file(path, rows):
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["SERVICE", "LIMIT", "SCOPE", "MAX", "USED", "USED%"])
+        for row in rows:
+            writer.writerow(
+                [
+                    row["service"],
+                    row["limit"],
+                    row["scope"],
+                    row["max"],
+                    row["used"],
+                    row["used_pct"],
+                ]
+            )
+
+
+def write_xlsx_file(path, rows_by_region):
+    import xlsxwriter
+
+    workbook = xlsxwriter.Workbook(str(path))
+    try:
+        header_format = workbook.add_format({"bold": True})
+        existing_names = set()
+        for region_name, rows in rows_by_region.items():
+            sheet_name = safe_sheet_name(region_name, existing_names)
+            existing_names.add(sheet_name)
+            worksheet = workbook.add_worksheet(sheet_name)
+            headers = ["SERVICE", "LIMIT", "SCOPE", "MAX", "USED", "USED%"]
+            for column_index, header in enumerate(headers):
+                worksheet.write(0, column_index, header, header_format)
+            for row_index, row in enumerate(rows, start=1):
+                worksheet.write_row(
+                    row_index,
+                    0,
+                    [
+                        row["service"],
+                        row["limit"],
+                        row["scope"],
+                        row["max"],
+                        row["used"],
+                        row["used_pct"],
+                    ],
+                )
+            worksheet.set_column(0, 0, 20)
+            worksheet.set_column(1, 1, 52)
+            worksheet.set_column(2, 2, 30)
+            worksheet.set_column(3, 5, 14)
+    finally:
+        workbook.close()
+
+
+def write_output_file(output_path_text, rows_by_region):
+    output_path = Path(output_path_text).expanduser()
+    region_names = list(rows_by_region.keys())
+    if len(region_names) == 1 and output_path.suffix.lower() == ".csv":
+        write_csv_file(output_path, rows_by_region[region_names[0]])
+        return output_path, "csv"
+
+    if output_path.suffix.lower() != ".xlsx":
+        output_path = output_path.with_suffix(".xlsx")
+    write_xlsx_file(output_path, rows_by_region)
+    return output_path, "xlsx"
 
 
 def main():
@@ -1046,13 +1166,17 @@ def main():
         print(f"Failed to load OCI config: {exc}", file=sys.stderr)
         return 1
 
-    if args.region:
-        config["region"] = args.region
+    try:
+        regions = parse_regions(args.region, config.get("region"))
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
-    tenancy_id = config["tenancy"]
-    limits_client = oci.limits.LimitsClient(config)
-    identity_client = oci.identity.IdentityClient(config)
-    compartment_ids = active_compartment_ids(identity_client, tenancy_id)
+    base_config = dict(config)
+    base_config["region"] = regions[0]
+
+    tenancy_id = base_config["tenancy"]
+    limits_client = oci.limits.LimitsClient(base_config)
 
     try:
         available_services = service_names(limits_client, tenancy_id, None)
@@ -1071,79 +1195,111 @@ def main():
         print(str(exc), file=sys.stderr)
         return 1
 
-    manual_usage_cache = {}
-
-    print(f"Region: {config.get('region', 'unknown')}")
-    print(
-        f"{'SERVICE':<18} {'LIMIT':<48} {'SCOPE':<28} "
-        f"{'MAX':>12} {'USED':>12} {'USED%':>8}"
-    )
-    print("-" * 126)
+    show_region = len(regions) > 1
+    if show_region:
+        print("Regions: " + ", ".join(regions))
+        print(
+            f"{'REGION':<15} {'SERVICE':<18} {'LIMIT':<48} {'SCOPE':<28} "
+            f"{'MAX':>12} {'USED':>12} {'USED%':>8}"
+        )
+        print("-" * 142)
+    else:
+        print(f"Region: {regions[0]}")
+        print(
+            f"{'SERVICE':<18} {'LIMIT':<48} {'SCOPE':<28} "
+            f"{'MAX':>12} {'USED':>12} {'USED%':>8}"
+        )
+        print("-" * 126)
 
     printed_rows = 0
     failed_services = []
+    rows_by_region = {region_name: [] for region_name in regions}
 
-    for service_name in services:
-        try:
-            definitions = limit_definitions_by_name(limits_client, tenancy_id, service_name)
-            limit_values = paged(
-                limits_client.list_limit_values,
-                tenancy_id,
-                service_name=service_name,
-            )
-            limit_values.extend(synthetic_limit_values(service_name, settings))
-        except Exception as exc:
-            failed_services.append((service_name, str(exc)))
-            continue
+    for region_name in regions:
+        region_config = dict(base_config)
+        region_config["region"] = region_name
+        region_limits_client = oci.limits.LimitsClient(region_config)
+        identity_client = oci.identity.IdentityClient(region_config)
+        compartment_ids = active_compartment_ids(identity_client, tenancy_id)
+        manual_usage_cache = {}
 
-        if service_name not in manual_usage_cache:
-            manual_usage_cache[service_name] = manual_usage_by_service(
-                config,
-                identity_client,
-                tenancy_id,
-                compartment_ids,
-                service_name,
-            )
-        manual_usage = manual_usage_cache[service_name]
-
-        for limit_value in sorted(
-            limit_values,
-            key=lambda item: (
-                item.name.lower(),
-                item.availability_domain or "",
-                item.scope_type or "",
-            ),
-        ):
-            definition = definitions.get(limit_value.name)
-            usage_supported = bool(
-                definition and getattr(definition, "is_resource_availability_supported", False)
-            )
-
+        for service_name in services:
             try:
-                usage = fetch_usage(
-                    limits_client,
+                definitions = limit_definitions_by_name(region_limits_client, tenancy_id, service_name)
+                limit_values = paged(
+                    region_limits_client.list_limit_values,
                     tenancy_id,
-                    service_name,
-                    limit_value,
-                    manual_usage,
-                    usage_supported,
+                    service_name=service_name,
                 )
-            except Exception:
-                usage = {
-                    "used": None,
-                    "quota": None,
-                }
-
-            if args.only_with_usage and (usage["used"] is None or usage["used"] <= 0):
+                limit_values.extend(synthetic_limit_values(service_name, settings))
+            except Exception as exc:
+                failed_services.append((region_name, service_name, str(exc)))
                 continue
 
-            print_row(service_name, limit_value, usage)
-            printed_rows += 1
+            if service_name not in manual_usage_cache:
+                manual_usage_cache[service_name] = manual_usage_by_service(
+                    region_config,
+                    identity_client,
+                    tenancy_id,
+                    compartment_ids,
+                    service_name,
+                )
+            manual_usage = manual_usage_cache[service_name]
+
+            for limit_value in sorted(
+                limit_values,
+                key=lambda item: (
+                    item.name.lower(),
+                    item.availability_domain or "",
+                    item.scope_type or "",
+                ),
+            ):
+                definition = definitions.get(limit_value.name)
+                usage_supported = bool(
+                    definition and getattr(definition, "is_resource_availability_supported", False)
+                )
+
+                try:
+                    usage = fetch_usage(
+                        region_limits_client,
+                        tenancy_id,
+                        service_name,
+                        limit_value,
+                        manual_usage,
+                        usage_supported,
+                    )
+                except Exception:
+                    usage = {
+                        "used": None,
+                        "quota": None,
+                    }
+
+                if args.only_with_usage and (usage["used"] is None or usage["used"] <= 0):
+                    continue
+
+                row = output_row(region_name, service_name, limit_value, usage)
+                rows_by_region[region_name].append(row)
+                print_row(row, show_region=show_region)
+                printed_rows += 1
 
     if failed_services:
         print("\nServices that could not be queried:", file=sys.stderr)
-        for service_name, error_text in failed_services:
-            print(f"  {service_name}: {error_text}", file=sys.stderr)
+        for region_name, service_name, error_text in failed_services:
+            print(f"  {region_name} {service_name}: {error_text}", file=sys.stderr)
+
+    if args.csv_output:
+        try:
+            output_path, output_kind = write_output_file(args.csv_output, rows_by_region)
+        except Exception as exc:
+            print(f"Failed to write export file: {exc}", file=sys.stderr)
+            return 1
+        if output_kind == "xlsx" and len(regions) > 1:
+            print(
+                f"\nWrote XLSX workbook with one worksheet per region to {output_path}.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"\nWrote {output_kind.upper()} output to {output_path}.", file=sys.stderr)
 
     if printed_rows == 0:
         print(
