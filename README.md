@@ -98,6 +98,12 @@ Run in multiple regions:
 python3 get-limits-service-usage.py --region us-ashburn-1,us-phoenix-1
 ```
 
+Run in all subscribed tenancy regions:
+
+```bash
+python3 get-limits-service-usage.py --region all
+```
+
 Write multi-region output to separate CSV files:
 
 ```bash
@@ -170,6 +176,11 @@ These options are mutually exclusive:
 - multiple regions: write one CSV file per region
 - for multi-region runs, the script adds the region name to the filename
 - if the filename does not end with `.csv`, the script writes `.csv` files
+
+`--region all` means:
+
+- resolve all tenancy region subscriptions with status `READY`
+- run the same limits and usage collection in each of those regions
 
 ## Output
 

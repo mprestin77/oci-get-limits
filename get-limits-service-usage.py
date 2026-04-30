@@ -37,6 +37,7 @@ def parse_args():
             "  python3 get-limits-service-usage.py --services-file services.conf\n"
             "  python3 get-limits-service-usage.py --settings-file limits-settings.conf\n"
             "  python3 get-limits-service-usage.py --csv limits.csv\n"
+            "  python3 get-limits-service-usage.py --region all\n"
             "  python3 get-limits-service-usage.py --service batch-computing --region us-ashburn-1\n"
             "  python3 get-limits-service-usage.py --only-with-usage\n"
             "  python3 get-limits-service-usage.py --profile PROD --config-file ~/.oci/config"
@@ -61,7 +62,7 @@ def parse_args():
     parser.add_argument(
         "-r",
         "--region",
-        help="Override the region from your OCI config. Use a comma-separated list for multiple regions.",
+        help="Override the region from your OCI config. Use a comma-separated list for multiple regions, or use 'all' for all subscribed regions.",
     )
     parser.add_argument(
         "-p",
@@ -170,9 +171,26 @@ def load_script_settings(path_text):
     return settings
 
 
-def parse_regions(region_text, default_region):
+def parse_regions(region_text, default_region, identity_client=None, tenancy_id=None):
     if not region_text:
         return [default_region]
+
+    if region_text.strip().lower() == "all":
+        if identity_client is None or tenancy_id is None:
+            raise RuntimeError("Unable to resolve regions for 'all'.")
+        subscriptions = safe_paged(identity_client.list_region_subscriptions, tenancy_id)
+        regions = []
+        seen = set()
+        for subscription in subscriptions:
+            region_name = getattr(subscription, "region_name", None)
+            status = (getattr(subscription, "status", "") or "").upper()
+            if not region_name or status != "READY" or region_name in seen:
+                continue
+            seen.add(region_name)
+            regions.append(region_name)
+        if not regions:
+            raise RuntimeError("No subscribed regions with READY status were found.")
+        return regions
 
     regions = []
     seen = set()
@@ -1133,16 +1151,22 @@ def main():
         print(f"Failed to load OCI config: {exc}", file=sys.stderr)
         return 1
 
+    tenancy_id = config["tenancy"]
+    bootstrap_identity_client = oci.identity.IdentityClient(config)
+
     try:
-        regions = parse_regions(args.region, config.get("region"))
+        regions = parse_regions(
+            args.region,
+            config.get("region"),
+            identity_client=bootstrap_identity_client,
+            tenancy_id=tenancy_id,
+        )
     except Exception as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
     base_config = dict(config)
     base_config["region"] = regions[0]
-
-    tenancy_id = base_config["tenancy"]
     limits_client = oci.limits.LimitsClient(base_config)
 
     try:
