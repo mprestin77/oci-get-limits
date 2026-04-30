@@ -84,7 +84,7 @@ def parse_args():
         "--csv",
         "--CSV",
         dest="csv_output",
-        help="Write output to a file. Single region writes CSV. Multiple regions write an XLSX workbook with one worksheet per region.",
+        help="Write output to CSV. Multiple regions create one CSV file per region with the region name added to the filename.",
     )
     parser.add_argument(
         "--only-with-usage",
@@ -1073,82 +1073,49 @@ def print_row(row, show_region=False):
     print(line)
 
 
-def safe_sheet_name(region_name, existing_names):
-    invalid = set("[]:*?/\\")
-    cleaned = "".join("_" if character in invalid else character for character in region_name)
-    cleaned = cleaned[:31] or "region"
-    candidate = cleaned
-    counter = 2
-    while candidate in existing_names:
-        suffix = f"_{counter}"
-        candidate = f"{cleaned[:31-len(suffix)]}{suffix}"
-        counter += 1
-    return candidate
+def csv_output_paths(output_path_text, region_names):
+    base_path = Path(output_path_text).expanduser()
+    if base_path.suffix.lower() != ".csv":
+        base_path = base_path.with_suffix(".csv")
+
+    if len(region_names) == 1:
+        return {region_names[0]: base_path}
+
+    paths = {}
+    for region_name in region_names:
+        paths[region_name] = base_path.with_name(
+            f"{base_path.stem}-{region_name}{base_path.suffix}"
+        )
+    return paths
 
 
-def write_csv_file(path, rows):
+def write_csv_file(path, rows, include_region=False):
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["SERVICE", "LIMIT", "SCOPE", "MAX", "USED", "USED%"])
+        headers = ["SERVICE", "LIMIT", "SCOPE", "MAX", "USED", "USED%"]
+        if include_region:
+            headers = ["REGION"] + headers
+        writer.writerow(headers)
         for row in rows:
-            writer.writerow(
-                [
-                    row["service"],
-                    row["limit"],
-                    row["scope"],
-                    row["max"],
-                    row["used"],
-                    row["used_pct"],
-                ]
-            )
+            values = [
+                row["service"],
+                row["limit"],
+                row["scope"],
+                row["max"],
+                row["used"],
+                row["used_pct"],
+            ]
+            if include_region:
+                values = [row["region"]] + values
+            writer.writerow(values)
 
 
-def write_xlsx_file(path, rows_by_region):
-    import xlsxwriter
-
-    workbook = xlsxwriter.Workbook(str(path))
-    try:
-        header_format = workbook.add_format({"bold": True})
-        existing_names = set()
-        for region_name, rows in rows_by_region.items():
-            sheet_name = safe_sheet_name(region_name, existing_names)
-            existing_names.add(sheet_name)
-            worksheet = workbook.add_worksheet(sheet_name)
-            headers = ["SERVICE", "LIMIT", "SCOPE", "MAX", "USED", "USED%"]
-            for column_index, header in enumerate(headers):
-                worksheet.write(0, column_index, header, header_format)
-            for row_index, row in enumerate(rows, start=1):
-                worksheet.write_row(
-                    row_index,
-                    0,
-                    [
-                        row["service"],
-                        row["limit"],
-                        row["scope"],
-                        row["max"],
-                        row["used"],
-                        row["used_pct"],
-                    ],
-                )
-            worksheet.set_column(0, 0, 20)
-            worksheet.set_column(1, 1, 52)
-            worksheet.set_column(2, 2, 30)
-            worksheet.set_column(3, 5, 14)
-    finally:
-        workbook.close()
-
-
-def write_output_file(output_path_text, rows_by_region):
-    output_path = Path(output_path_text).expanduser()
+def write_output_files(output_path_text, rows_by_region):
     region_names = list(rows_by_region.keys())
-    if len(region_names) == 1 and output_path.suffix.lower() == ".csv":
-        write_csv_file(output_path, rows_by_region[region_names[0]])
-        return output_path, "csv"
-
-    if output_path.suffix.lower() != ".xlsx":
-        output_path = output_path.with_suffix(".xlsx")
-    write_xlsx_file(output_path, rows_by_region)
-    return output_path, "xlsx"
+    paths = csv_output_paths(output_path_text, region_names)
+    for region_name, path in paths.items():
+        write_csv_file(path, rows_by_region[region_name], include_region=False)
+    return paths
 
 
 def main():
@@ -1289,17 +1256,17 @@ def main():
 
     if args.csv_output:
         try:
-            output_path, output_kind = write_output_file(args.csv_output, rows_by_region)
+            output_paths = write_output_files(args.csv_output, rows_by_region)
         except Exception as exc:
             print(f"Failed to write export file: {exc}", file=sys.stderr)
             return 1
-        if output_kind == "xlsx" and len(regions) > 1:
-            print(
-                f"\nWrote XLSX workbook with one worksheet per region to {output_path}.",
-                file=sys.stderr,
-            )
+        if len(output_paths) == 1:
+            output_path = next(iter(output_paths.values()))
+            print(f"\nWrote CSV output to {output_path}.", file=sys.stderr)
         else:
-            print(f"\nWrote {output_kind.upper()} output to {output_path}.", file=sys.stderr)
+            print("\nWrote CSV output files:", file=sys.stderr)
+            for region_name, output_path in output_paths.items():
+                print(f"  {region_name}: {output_path}", file=sys.stderr)
 
     if printed_rows == 0:
         print(
