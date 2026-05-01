@@ -15,12 +15,14 @@ Main script:
 - Can export results to CSV
 - Supports semantic scope labels such as `PER_VCN`, `PER_LB`, and `PER_POLICY`
 - Can show only limits with non-zero usage
+- Supports OCI config file authentication and instance principal authentication
 
 ## Requirements
 
 - Python 3
 - OCI Python SDK
 - OCI config file, by default `~/.oci/config`
+- Or an OCI compute instance with instance principal enabled
 - OCI permissions to read limits and relevant service resources
 
 ## IAM policy
@@ -116,6 +118,18 @@ Use a specific OCI profile:
 python3 get-limits-service-usage.py --profile PROD
 ```
 
+Run with instance principal authentication:
+
+```bash
+python3 get-limits-service-usage.py --instance-principal
+```
+
+Run with instance principal authentication in all subscribed regions:
+
+```bash
+python3 get-limits-service-usage.py --instance-principal --region all
+```
+
 Use a custom settings file:
 
 ```bash
@@ -166,6 +180,12 @@ These options are mutually exclusive:
 - `--service`
 - `--services-file`
 - `--list-services`
+
+`--instance-principal` means:
+
+- authenticate with OCI instance principals instead of `~/.oci/config`
+- the script uses the instance principal tenancy and current instance region unless `--region` is provided
+- `--region all` resolves all subscribed tenancy regions with status `READY`
 
 `--only-with-usage` means:
 

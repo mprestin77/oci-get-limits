@@ -39,6 +39,7 @@ def parse_args():
             "  python3 get-limits-service-usage.py --settings-file limits-settings.conf\n"
             "  python3 get-limits-service-usage.py --csv limits.csv\n"
             "  python3 get-limits-service-usage.py --region all\n"
+            "  python3 get-limits-service-usage.py --instance-principal --region all\n"
             "  python3 get-limits-service-usage.py --service batch-computing --region us-ashburn-1\n"
             "  python3 get-limits-service-usage.py --only-with-usage\n"
             "  python3 get-limits-service-usage.py --profile PROD --config-file ~/.oci/config"
@@ -76,6 +77,11 @@ def parse_args():
         "--config-file",
         default=oci.config.DEFAULT_LOCATION,
         help=f"OCI config path. Default: {oci.config.DEFAULT_LOCATION}",
+    )
+    parser.add_argument(
+        "--instance-principal",
+        action="store_true",
+        help="Use OCI instance principal authentication instead of the OCI config file.",
     )
     parser.add_argument(
         "--settings-file",
@@ -128,6 +134,44 @@ def safe_paged(callable_obj, *args, **kwargs):
         return paged(callable_obj, *args, **kwargs)
     except Exception:
         return []
+
+
+def create_client(client_class, config, signer=None):
+    if signer is None:
+        return client_class(config)
+    return client_class(config, signer=signer)
+
+
+def bootstrap_region(region_text, default_region):
+    if not region_text:
+        return default_region
+    if region_text.strip().lower() == "all":
+        return default_region
+    for raw_region in region_text.split(","):
+        region = raw_region.strip()
+        if region:
+            return region
+    return default_region
+
+
+def load_auth(args):
+    if args.instance_principal:
+        try:
+            signer = oci.auth.signers.InstancePrincipalsSecurityTokenSigner()
+        except Exception as exc:
+            raise RuntimeError(f"Failed to initialize instance principal authentication: {exc}") from exc
+        region = bootstrap_region(args.region, signer.region)
+        config = {
+            "region": region,
+            "tenancy": signer.tenancy_id,
+        }
+        return config, signer
+
+    try:
+        config = oci.config.from_file(args.config_file, args.profile)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load OCI config: {exc}") from exc
+    return config, None
 
 
 def paged_response_items(callable_obj, *args, **kwargs):
@@ -356,8 +400,8 @@ def get_identity_manual_usage(identity_client, tenancy_id, compartment_ids):
     return usage
 
 
-def get_certificates_manual_usage(config, compartment_ids):
-    client = oci.certificates_management.CertificatesManagementClient(config)
+def get_certificates_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.certificates_management.CertificatesManagementClient, config, signer)
 
     certificates = list_by_compartments(
         client.list_certificates,
@@ -424,8 +468,8 @@ def get_certificates_manual_usage(config, compartment_ids):
     }
 
 
-def get_batch_manual_usage(config, compartment_ids):
-    client = oci.batch.BatchComputingClient(config)
+def get_batch_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.batch.BatchComputingClient, config, signer)
 
     contexts = list_by_compartments(
         client.list_batch_contexts,
@@ -503,8 +547,8 @@ def get_batch_manual_usage(config, compartment_ids):
     }
 
 
-def get_block_storage_manual_usage(config, compartment_ids):
-    client = oci.core.BlockstorageClient(config)
+def get_block_storage_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.core.BlockstorageClient, config, signer)
     volume_groups = list_by_compartments(
         client.list_volume_groups,
         compartment_ids,
@@ -518,8 +562,8 @@ def get_block_storage_manual_usage(config, compartment_ids):
     }
 
 
-def get_vcn_manual_usage(config, compartment_ids):
-    client = oci.core.VirtualNetworkClient(config)
+def get_vcn_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.core.VirtualNetworkClient, config, signer)
 
     dhcp_options = list_by_compartments(client.list_dhcp_options, compartment_ids, filter_deleted=True)
     drgs = list_by_compartments(client.list_drgs, compartment_ids, filter_deleted=True)
@@ -595,8 +639,8 @@ def get_vcn_manual_usage(config, compartment_ids):
     }
 
 
-def get_fast_connect_manual_usage(config, compartment_ids):
-    client = oci.core.VirtualNetworkClient(config)
+def get_fast_connect_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.core.VirtualNetworkClient, config, signer)
 
     cross_connects = exclude_states(
         list_by_compartments(client.list_cross_connects, compartment_ids),
@@ -647,8 +691,8 @@ def get_fast_connect_manual_usage(config, compartment_ids):
     }
 
 
-def get_dns_manual_usage(config, compartment_ids):
-    client = oci.dns.DnsClient(config)
+def get_dns_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.dns.DnsClient, config, signer)
 
     zones = list_by_compartments(client.list_zones, compartment_ids, filter_deleted=True)
     steering_policies = list_by_compartments(
@@ -693,9 +737,9 @@ def get_dns_manual_usage(config, compartment_ids):
     return usage
 
 
-def get_notifications_manual_usage(config, compartment_ids):
-    control_client = oci.ons.NotificationControlPlaneClient(config)
-    data_client = oci.ons.NotificationDataPlaneClient(config)
+def get_notifications_manual_usage(config, compartment_ids, signer=None):
+    control_client = create_client(oci.ons.NotificationControlPlaneClient, config, signer)
+    data_client = create_client(oci.ons.NotificationDataPlaneClient, config, signer)
 
     topics = list_by_compartments(control_client.list_topics, compartment_ids, filter_deleted=True)
     subscriptions = list_by_compartments(
@@ -710,8 +754,8 @@ def get_notifications_manual_usage(config, compartment_ids):
     }
 
 
-def get_faas_manual_usage(config, compartment_ids):
-    client = oci.functions.FunctionsManagementClient(config)
+def get_faas_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.functions.FunctionsManagementClient, config, signer)
 
     applications = list_by_compartments(client.list_applications, compartment_ids, filter_deleted=True)
     functions = []
@@ -744,8 +788,8 @@ def get_faas_manual_usage(config, compartment_ids):
     }
 
 
-def get_load_balancer_manual_usage(config, compartment_ids):
-    client = oci.load_balancer.LoadBalancerClient(config)
+def get_load_balancer_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.load_balancer.LoadBalancerClient, config, signer)
     load_balancer_summaries = list_by_compartments(
         client.list_load_balancers,
         compartment_ids,
@@ -783,8 +827,8 @@ def get_load_balancer_manual_usage(config, compartment_ids):
     }
 
 
-def get_secrets_manual_usage(config, compartment_ids):
-    client = oci.vault.VaultsClient(config)
+def get_secrets_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.vault.VaultsClient, config, signer)
     secrets = list_by_compartments(client.list_secrets, compartment_ids, filter_deleted=True)
 
     versions_per_secret = []
@@ -805,8 +849,8 @@ def get_secrets_manual_usage(config, compartment_ids):
     }
 
 
-def get_resource_scheduler_manual_usage(config, compartment_ids):
-    client = oci.resource_scheduler.ScheduleClient(config)
+def get_resource_scheduler_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.resource_scheduler.ScheduleClient, config, signer)
     schedules = list_by_compartments(client.list_schedules, compartment_ids, filter_deleted=True)
     return {
         "schedule-count": len(schedules),
@@ -820,8 +864,8 @@ def get_regions_manual_usage(identity_client, tenancy_id):
     }
 
 
-def get_vcn_logging_usage(config, compartment_ids):
-    logging_client = oci.logging.LoggingManagementClient(config)
+def get_vcn_logging_usage(config, compartment_ids, signer=None):
+    logging_client = create_client(oci.logging.LoggingManagementClient, config, signer)
     log_groups = list_by_compartments(
         logging_client.list_log_groups,
         compartment_ids,
@@ -845,8 +889,8 @@ def get_vcn_logging_usage(config, compartment_ids):
     }
 
 
-def get_container_engine_manual_usage(config, compartment_ids):
-    client = oci.container_engine.ContainerEngineClient(config)
+def get_container_engine_manual_usage(config, compartment_ids, signer=None):
+    client = create_client(oci.container_engine.ContainerEngineClient, config, signer)
     node_pools = list_by_compartments(client.list_node_pools, compartment_ids, filter_deleted=True)
     virtual_node_pools = list_by_compartments(
         client.list_virtual_node_pools,
@@ -872,38 +916,38 @@ def get_container_engine_manual_usage(config, compartment_ids):
     }
 
 
-def manual_usage_by_service(config, identity_client, tenancy_id, compartment_ids, service_name):
+def manual_usage_by_service(config, identity_client, tenancy_id, compartment_ids, service_name, signer=None):
     normalized = service_name.lower()
     if normalized == "identity":
         return get_identity_manual_usage(identity_client, tenancy_id, compartment_ids)
     if normalized == "certificates":
-        return get_certificates_manual_usage(config, compartment_ids)
+        return get_certificates_manual_usage(config, compartment_ids, signer)
     if normalized == "batch-computing":
-        return get_batch_manual_usage(config, compartment_ids)
+        return get_batch_manual_usage(config, compartment_ids, signer)
     if normalized == "block-storage":
-        return get_block_storage_manual_usage(config, compartment_ids)
+        return get_block_storage_manual_usage(config, compartment_ids, signer)
     if normalized == "vcn":
-        usage = get_vcn_manual_usage(config, compartment_ids)
-        usage.update(get_vcn_logging_usage(config, compartment_ids))
+        usage = get_vcn_manual_usage(config, compartment_ids, signer)
+        usage.update(get_vcn_logging_usage(config, compartment_ids, signer))
         return usage
     if normalized == "fast-connect":
-        return get_fast_connect_manual_usage(config, compartment_ids)
+        return get_fast_connect_manual_usage(config, compartment_ids, signer)
     if normalized == "dns":
-        return get_dns_manual_usage(config, compartment_ids)
+        return get_dns_manual_usage(config, compartment_ids, signer)
     if normalized == "notifications":
-        return get_notifications_manual_usage(config, compartment_ids)
+        return get_notifications_manual_usage(config, compartment_ids, signer)
     if normalized == "faas":
-        return get_faas_manual_usage(config, compartment_ids)
+        return get_faas_manual_usage(config, compartment_ids, signer)
     if normalized == "load-balancer":
-        return get_load_balancer_manual_usage(config, compartment_ids)
+        return get_load_balancer_manual_usage(config, compartment_ids, signer)
     if normalized == "secrets":
-        return get_secrets_manual_usage(config, compartment_ids)
+        return get_secrets_manual_usage(config, compartment_ids, signer)
     if normalized == "resource-scheduler":
-        return get_resource_scheduler_manual_usage(config, compartment_ids)
+        return get_resource_scheduler_manual_usage(config, compartment_ids, signer)
     if normalized == "regions":
         return get_regions_manual_usage(identity_client, tenancy_id)
     if normalized == "container-engine":
-        return get_container_engine_manual_usage(config, compartment_ids)
+        return get_container_engine_manual_usage(config, compartment_ids, signer)
     return {}
 
 
@@ -1163,13 +1207,13 @@ def main():
         return 1
 
     try:
-        config = oci.config.from_file(args.config_file, args.profile)
+        config, signer = load_auth(args)
     except Exception as exc:
-        print(f"Failed to load OCI config: {exc}", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
         return 1
 
     tenancy_id = config["tenancy"]
-    bootstrap_identity_client = oci.identity.IdentityClient(config)
+    bootstrap_identity_client = create_client(oci.identity.IdentityClient, config, signer)
 
     try:
         regions = parse_regions(
@@ -1184,7 +1228,7 @@ def main():
 
     base_config = dict(config)
     base_config["region"] = regions[0]
-    limits_client = oci.limits.LimitsClient(base_config)
+    limits_client = create_client(oci.limits.LimitsClient, base_config, signer)
 
     try:
         available_services = service_names(limits_client, tenancy_id, None)
@@ -1226,8 +1270,8 @@ def main():
     for region_name in regions:
         region_config = dict(base_config)
         region_config["region"] = region_name
-        region_limits_client = oci.limits.LimitsClient(region_config)
-        identity_client = oci.identity.IdentityClient(region_config)
+        region_limits_client = create_client(oci.limits.LimitsClient, region_config, signer)
+        identity_client = create_client(oci.identity.IdentityClient, region_config, signer)
         compartment_ids = active_compartment_ids(identity_client, tenancy_id)
         manual_usage_cache = {}
 
@@ -1257,6 +1301,7 @@ def main():
                     tenancy_id,
                     compartment_ids,
                     service_name,
+                    signer,
                 )
             manual_usage = manual_usage_cache[service_name]
 
