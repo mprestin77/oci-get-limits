@@ -160,13 +160,6 @@ faas
 
 Settings from this file are used only for limits whose values are not exposed directly through the OCI Limits API.
 
-Example:
-
-```text
-IDENTITY_DYNAMIC_GROUPS_LIMIT = 300
-IDENTITY_POLICY_STATEMENTS_PER_HIERARCHY_LIMIT = 500
-```
-
 ## Flags
 
 Show all available flags and their descriptions:
